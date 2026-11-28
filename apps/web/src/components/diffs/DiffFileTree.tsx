@@ -1,12 +1,21 @@
-import type { GitStatusEntry } from "@pierre/trees";
+import type {
+  ContextMenuItem as TreeContextMenuItem,
+  ContextMenuOpenContext as TreeContextMenuOpenContext,
+  GitStatusEntry,
+} from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { T, useGT } from "gt-react";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import { useComposerHandleContext } from "~/composerHandleContext";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
 import {
   PIERRE_TREE_UNSAFE_CSS,
   pierreTreeStyle,
@@ -18,12 +27,20 @@ import {
   setAllDirectoriesExpanded,
   subscribeOncePerTask,
 } from "../files/fileTreeExpansion";
+import {
+  addFileTreeRowToChat,
+  addToChatMenuItem,
+  copyFileTreeRow,
+  fileTreeCopyMenuItems,
+  useTreeContextMenuAnchor,
+} from "../files/fileTreeRowMenu";
 import { Button } from "../ui/button";
 import {
   buildDiffFileTreeUpdates,
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
   diffFileTreeModel,
+  diffFileTreeRow,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
 import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
@@ -34,6 +51,10 @@ export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 interface DiffFileTreeProps {
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
   readonly onSelectFile: (path: string) => void;
+  /** Host folder the diff paths belong to; copied paths use its separators. */
+  readonly workspaceRoot: string | undefined;
+  /** The open thread's path for a row; Add to chat is offered only where it returns one. */
+  readonly mentionPath?: (path: string) => string | null;
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
   readonly ariaLabel: string;
@@ -45,6 +66,8 @@ interface DiffFileTreeProps {
 export function DiffFileTree({
   entries,
   onSelectFile,
+  workspaceRoot,
+  mentionPath,
   selectedPath = null,
   revealRequestId = 0,
   ariaLabel,
@@ -89,7 +112,41 @@ export function DiffFileTree({
     }
   });
 
+  const contextMenuAnchor = useTreeContextMenuAnchor();
+  const composerRef = useComposerHandleContext();
+  const showRowContextMenu = useStableCallback(
+    (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
+      const api = readLocalApi();
+      if (!api) {
+        context.close();
+        return;
+      }
+      const row = diffFileTreeRow(item.path, presented.selectionPath);
+      const { position, source } = contextMenuAnchor.takeOver(context);
+      void settlePromise(async () => {
+        // A pull request opened outside a thread has no chat to add to.
+        const threadPath = composerRef?.current == null ? null : (mentionPath?.(row.path) ?? null);
+        const clicked = await api.contextMenu.show(
+          [...fileTreeCopyMenuItems(), ...(threadPath === null ? [] : [addToChatMenuItem()])],
+          position,
+          source,
+        );
+        if (clicked === "add-to-chat") {
+          if (threadPath !== null) addFileTreeRowToChat(composerRef, threadPath);
+        } else if (clicked !== null) await copyFileTreeRow(clicked, row, workspaceRoot);
+      }).then((result) => {
+        if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
+      });
+    },
+  );
+
   const { model } = useFileTree({
+    composition: {
+      contextMenu: {
+        triggerMode: "right-click",
+        onOpen: (item, context) => showRowContextMenu(item, context),
+      },
+    },
     density: "compact",
     flattenEmptyDirectories: true,
     initialExpansion: "open",
@@ -251,6 +308,7 @@ export function DiffFileTree({
             );
           if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
         }}
+        onContextMenuCapture={contextMenuAnchor.onContextMenuCapture}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
         onPointerOver={titleClippedPierreTreeRow}

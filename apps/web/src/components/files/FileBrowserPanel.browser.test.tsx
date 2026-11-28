@@ -133,6 +133,10 @@ describe("FileBrowserPanel", () => {
     await userEvent.click(copyPath);
     await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("/repo/src"));
 
+    await openRowMenu("src/");
+    await userEvent.click(page.getByRole("menuitem", { name: "Copy name", exact: true }));
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("src"));
+
     await openRowMenu("README.md");
     const copyMention = page.getByRole("menuitem", { name: "Copy mention", exact: true });
     await expect.element(copyMention).toBeVisible();

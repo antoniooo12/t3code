@@ -924,6 +924,16 @@ export default function DiffPanel({
       </div>
     ) : null;
   };
+  // A mention names the file from the thread's folder, the way the file viewer opens it.
+  const threadMentionPath = (filePath: string) => {
+    const repositoryFile = repositoryFileTarget(filePath);
+    if (repositoryFile?.insideThreadFolder === false) return null;
+    return resolveDiffPathForWorkspace({
+      filePath,
+      workspaceRoot: activeCwd,
+      repositoryRoot: repositoryFile ? undefined : diffPathRepositoryRoot,
+    });
+  };
   const openDiffFile = (filePath: string) => {
     const repositoryFile = repositoryFileTarget(filePath);
     openDiffFilePrimaryAction({
@@ -1844,6 +1854,8 @@ export default function DiffPanel({
                       selectedPath={selectedFilePath}
                       revealRequestId={selectedFileRevealRequestId}
                       onSelectFile={revealDiffFile}
+                      workspaceRoot={activeCwd}
+                      mentionPath={threadMentionPath}
                     />
                   </FileExplorerPane>
                 ) : null}
